@@ -4,13 +4,14 @@ const { privetstvie } = require("./texts");
 const {
   descriptionReloadableLasoCard,
   descriptionNonReloadableLasoCard,
+  bybitDecription,
 } = require("./descriptions");
 
 const token = "7623617111:AAF1X988ErWNSxMYJn1Z7z3PGqhrvNJLG7A";
 const bot = new TelegramApi(token, { polling: true });
 
-// Проверьте, что ID менеджера корректен
-const MANAGER_CHAT_ID = 197115775; // ID менеджера
+// ID менеджера
+const MANAGER_CHAT_ID = 197115775;
 
 // Массив с данными о доступных картах
 const availableCards = [
@@ -46,10 +47,24 @@ function createBackButtonKeyboard() {
   };
 }
 
+// Новая клавиатура "Назад" + "Связаться с менеджером"
+function createBackAndContactKeyboard() {
+  return {
+    reply_markup: JSON.stringify({
+      inline_keyboard: [
+        [
+          { text: "Назад", callback_data: "back_to_menu" },
+          { text: "Связаться с менеджером", callback_data: "contact_manager" },
+        ],
+      ],
+    }),
+  };
+}
+
 // Состояния пользователей (для диалога с менеджером)
 const userStates = {};
 
-// Устанавливаем команды
+// Устанавливаем команды бота
 bot.setMyCommands([
   { command: "/start", description: "Приветствие" },
   { command: "/info", description: "Информация" },
@@ -138,7 +153,6 @@ bot.on("callback_query", async (msg) => {
   const data = msg.data;
   const chatId = msg.message.chat.id;
 
-  // Проверим, что событие действительно обрабатывается
   console.log(`callback_query от чата ${chatId}, data = ${data}`);
 
   // Отвечаем на callback-запрос
@@ -164,7 +178,7 @@ bot.on("callback_query", async (msg) => {
     return;
   }
 
-  // Обработка выбора карты
+  // Обработка выбора карты по id
   const selectedCard = availableCards.find((card) => card.id === data);
   if (!selectedCard) {
     console.log("Карта не найдена по id:", data);
@@ -173,26 +187,29 @@ bot.on("callback_query", async (msg) => {
 
   console.log("Выбрана карта:", selectedCard.name, "с id:", selectedCard.id);
 
+  // Отдельная проверка для каждой карты
+  if (selectedCard.id === "card_bybit") {
+    console.log("Отправляем описание карты Bybit");
+    await bot.sendMessage(
+      chatId,
+      bybitDecription,
+      createBackAndContactKeyboard()
+    );
+  }
   if (selectedCard.id === "card_reloadable") {
     console.log("Отправляем описание пополняемой карты");
     await bot.sendMessage(
       chatId,
       descriptionReloadableLasoCard,
-      createBackButtonKeyboard()
+      createBackAndContactKeyboard()
     );
-  } else if (selectedCard.id === "card_non_reloadable") {
+  }
+  if (selectedCard.id === "card_non_reloadable") {
     console.log("Отправляем описание непополняемой карты");
     await bot.sendMessage(
       chatId,
       descriptionNonReloadableLasoCard,
-      createBackButtonKeyboard()
-    );
-  } else {
-    console.log("Отправляем стандартное сообщение (Bybit или что-то ещё)");
-    await bot.sendMessage(
-      chatId,
-      `Вы выбрали ${selectedCard.name}. Пожалуйста, свяжитесь с нашим менеджером для дальнейшего оформления или оставьте ваш контакт.`,
-      createBackButtonKeyboard()
+      createBackAndContactKeyboard()
     );
   }
 });
