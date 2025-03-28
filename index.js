@@ -10,20 +10,20 @@ const {
 const token = "7623617111:AAF1X988ErWNSxMYJn1Z7z3PGqhrvNJLG7A";
 const bot = new TelegramApi(token, { polling: true });
 
-// ID менеджера
-const MANAGER_CHAT_ID = 197115775;
+// ID менеджера и администратора (в данном случае один и тот же)
+const ADMIN_CHAT_ID = 197115775;
 
 // Массив с данными о доступных картах
 const availableCards = [
-  { name: "Карта Bybit", id: "card_bybit" },
+  { name: "Пополняемая международная Visa", id: "card_reloadable" },
   {
     name: "Предоплаченная международная Mastercard",
     id: "card_non_reloadable",
   },
-  { name: "Пополняемая международная Visa", id: "card_reloadable" },
+  { name: "Карта Bybit", id: "card_bybit" },
 ];
 
-// Клавиатура выбора карт + связь с менеджером
+// Функция для формирования клавиатуры выбора карт + "Связаться с менеджером"
 function createCardSelectionKeyboard() {
   const inlineKeyboard = availableCards.map((card) => [
     { text: card.name, callback_data: card.id },
@@ -47,7 +47,7 @@ function createBackButtonKeyboard() {
   };
 }
 
-// Новая клавиатура "Назад" + "Связаться с менеджером"
+// Клавиатура "Назад" + "Связаться с менеджером"
 function createBackAndContactKeyboard() {
   return {
     reply_markup: JSON.stringify({
@@ -61,14 +61,30 @@ function createBackAndContactKeyboard() {
   };
 }
 
-// Состояния пользователей (для диалога с менеджером)
+// Клавиатура админ-панели
+function createAdminKeyboard() {
+  return {
+    reply_markup: JSON.stringify({
+      inline_keyboard: [
+        [{ text: "Рассылка", callback_data: "admin_broadcast" }],
+        [{ text: "Статистика", callback_data: "admin_stats" }],
+        [{ text: "Закрыть панель", callback_data: "admin_close" }],
+      ],
+    }),
+  };
+}
+
+// Состояния пользователей (для диалога с менеджером и админ-панели)
 const userStates = {};
 
-// Устанавливаем команды бота
+// Список администраторов (в данном случае только один)
+const adminIDs = [ADMIN_CHAT_ID];
+
 bot.setMyCommands([
   { command: "/start", description: "Приветствие" },
   { command: "/info", description: "Информация" },
   { command: "/contact", description: "Связаться с менеджером" },
+  { command: "/admin", description: "Админ-панель" },
 ]);
 
 // Обработчик текстовых сообщений
@@ -95,7 +111,21 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // Если пользователь в процессе диалога
+  // Команда /admin – доступна только для админа
+  if (text === "/admin") {
+    console.log("Пользователь ввёл /admin, чат ID:", chatId);
+    if (!adminIDs.includes(chatId)) {
+      return bot.sendMessage(chatId, "Доступ запрещён.");
+    }
+    await bot.sendMessage(
+      chatId,
+      "Добро пожаловать в админ-панель. Выберите действие:",
+      createAdminKeyboard()
+    );
+    return;
+  }
+
+  // Если пользователь в процессе диалога (связь с менеджером или админские задачи)
   if (userStates[chatId]) {
     const state = userStates[chatId];
     console.log(
@@ -136,11 +166,22 @@ Email: ${state.email}
 ChatID: ${chatId}
 Информация о пользователе: ${userInfo}`;
       console.log("Отправляем менеджеру:", info);
-      await bot.sendMessage(MANAGER_CHAT_ID, info);
+      await bot.sendMessage(ADMIN_CHAT_ID, info);
       await bot.sendMessage(
         chatId,
         "Спасибо, ваша заявка отправлена. Наш менеджер свяжется с вами в ближайшее время.",
         createCardSelectionKeyboard()
+      );
+      delete userStates[chatId];
+      return;
+    }
+
+    // Админские состояния, например, для рассылки (если потребуется добавить)
+    if (state.stage === "broadcast") {
+      // Здесь можно реализовать рассылку всем пользователям
+      await bot.sendMessage(
+        chatId,
+        "Рассылка запущена!\nТекст рассылки: " + text
       );
       delete userStates[chatId];
       return;
@@ -154,8 +195,6 @@ bot.on("callback_query", async (msg) => {
   const chatId = msg.message.chat.id;
 
   console.log(`callback_query от чата ${chatId}, data = ${data}`);
-
-  // Отвечаем на callback-запрос
   await bot.answerCallbackQuery(msg.id);
 
   // Кнопка "Назад"
@@ -178,16 +217,13 @@ bot.on("callback_query", async (msg) => {
     return;
   }
 
-  // Обработка выбора карты по id
+  // Обработка выбора карты
   const selectedCard = availableCards.find((card) => card.id === data);
   if (!selectedCard) {
     console.log("Карта не найдена по id:", data);
     return;
   }
-
   console.log("Выбрана карта:", selectedCard.name, "с id:", selectedCard.id);
-
-  // Отдельная проверка для каждой карты
   if (selectedCard.id === "card_bybit") {
     console.log("Отправляем описание карты Bybit");
     await bot.sendMessage(
@@ -211,5 +247,44 @@ bot.on("callback_query", async (msg) => {
       descriptionNonReloadableLasoCard,
       createBackAndContactKeyboard()
     );
+  }
+
+  // Обработка админ-панели
+  if (data === "admin_broadcast") {
+    console.log("Админ выбрал рассылку");
+    userStates[chatId] = { stage: "broadcast" };
+    await bot.sendMessage(chatId, "Введите текст для рассылки:", {
+      reply_markup: JSON.stringify({
+        inline_keyboard: [
+          [{ text: "Отмена", callback_data: "broadcast_cancel" }],
+        ],
+      }),
+    });
+    return;
+  }
+  if (data === "admin_stats") {
+    console.log("Админ выбрал статистику");
+    // Здесь можно вывести статистику из базы или логов
+    await bot.sendMessage(
+      chatId,
+      "Статистика:\nПользователей: 123\nАктивных: 45\nСообщений: 678",
+      createAdminKeyboard()
+    );
+    return;
+  }
+  if (data === "admin_close") {
+    console.log("Админ закрыл панель");
+    await bot.sendMessage(
+      chatId,
+      "Панель закрыта.",
+      createCardSelectionKeyboard()
+    );
+    return;
+  }
+  if (data === "broadcast_cancel") {
+    console.log("Админ отменил рассылку");
+    delete userStates[chatId];
+    await bot.sendMessage(chatId, "Рассылка отменена.", createAdminKeyboard());
+    return;
   }
 });
