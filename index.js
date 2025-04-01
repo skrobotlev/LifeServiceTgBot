@@ -38,7 +38,6 @@ function createCardSelectionKeyboard() {
   };
 }
 
-// Клавиатура "Назад"
 function createBackButtonKeyboard() {
   return {
     reply_markup: JSON.stringify({
