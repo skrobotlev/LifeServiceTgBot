@@ -7,7 +7,7 @@ const {
   bybitDecription,
 } = require("./descriptions");
 
-const token = "7623617111:AAF1X988ErWNSxMYJn1Z7z3PGqhrvNJLG7A";
+const token = "7925187683:AAFSmyNwBQMGpgG5DVb-xNp-LLhUJ6U0EaY";
 const bot = new TelegramApi(token, { polling: true });
 
 const MANAGER_CHAT_ID = 197115775;

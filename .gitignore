@@ -31,4 +31,4 @@ build/
 
 .extensions/metamask
 .extensions/metamask-chrome
-.extensions
+extensions

@@ -2,17 +2,10 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const handleMessage = require('./handlers/messageHandler');
 const { handleCallback } = require("./handlers/callbackHandler");
-const firebaseService = require('./services/firebaseService');
 
 // Проверяем наличие токена
 if (!process.env.TELEGRAM_BOT_TOKEN) {
     console.error('Ошибка: TELEGRAM_BOT_TOKEN не найден в .env файле');
-    process.exit(1);
-}
-
-// Проверяем наличие конфигурации Firebase
-if (!process.env.FIREBASE_API_KEY || !process.env.FIREBASE_PROJECT_ID) {
-    console.error('Ошибка: Конфигурация Firebase не найдена в .env файле');
     process.exit(1);
 }
 
@@ -38,17 +31,6 @@ bot.getMe().then(me => {
     process.exit(1);
 });
 
-// Базовые команды
-bot.setMyCommands([
-    { command: "/start", description: "Начать работу" },
-    { command: "/auth", description: "Авторизация" },
-    { command: "/balance", description: "Баланс карты" }
-]).then(() => {
-    console.log('Команды бота установлены');
-}).catch(err => {
-    console.error('Ошибка при установке команд:', err);
-});
-
 // Обработчики
 bot.on('message', async (msg) => {
     console.log('=== Новое сообщение ===');
@@ -57,26 +39,6 @@ bot.on('message', async (msg) => {
     console.log('From:', msg.from.username);
     console.log('====================');
 
-    // Проверяем существование пользователя в Firebase
-    const user = await firebaseService.getUser(msg.from.id);
-    if (!user) {
-        // Создаем нового пользователя
-        await firebaseService.createUser(msg.from.id, {
-            telegramId: msg.from.id,
-            username: msg.from.username,
-            firstName: msg.from.first_name,
-            lastName: msg.from.last_name,
-            languageCode: msg.from.language_code,
-            isBot: msg.from.is_bot,
-            lastActivity: new Date()
-        });
-    } else {
-        // Обновляем время последней активности
-        await firebaseService.updateUser(msg.from.id, {
-            lastActivity: new Date()
-        });
-    }
-
     handleMessage(msg, bot);
 });
 
@@ -84,13 +46,6 @@ bot.on('callback_query', async (query) => {
     console.log('=== Новый callback ===');
     console.log('Query:', query);
     console.log('====================');
-
-    // Обновляем время последней активности пользователя
-    if (query.from) {
-        await firebaseService.updateUser(query.from.id, {
-            lastActivity: new Date()
-        });
-    }
 
     handleCallback(query, bot);
 });
