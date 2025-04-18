@@ -1,24 +1,27 @@
 const { ethers } = require('ethers');
 const axios = require('axios');
-const puppeteer = require('puppeteer');
+const { chromium } = require('playwright');
+const path = require('path');
+const os = require('os');
+const { getBrowserConfig } = require('../config/browserConfig');
 require('dotenv').config();
+const fs = require('fs');
 
 class LasoBrowserService {
     constructor() {
-        // Кэш для хранения токенов авторизации по адресам
-        this.tokenCache = new Map();
-        // Кэш для хранения данных карт
-        this.cardCache = new Map();
-        // Время жизни кэша (1 час)
-        this.cacheTTL = 60 * 60 * 1000;
-        
         this.browser = null;
+        this.context = null;
+        this.tokenCache = new Map();
+        this.dataCache = new Map();
+        this.userDataDir = path.join(os.tmpdir(), 'playwright-profile');
+        this.metamaskPath = path.join(__dirname, '../../extensions/metamask');
+        this.isServer = process.env.NODE_ENV === 'production';
         console.log('Сервис инициализирован');
     }
 
     // Получаем данные из кэша
     getCachedData(address) {
-        const cached = this.cardCache.get(address);
+        const cached = this.dataCache.get(address);
         if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
             return cached.data;
         }
@@ -27,7 +30,7 @@ class LasoBrowserService {
 
     // Сохраняем данные в кэш
     setCachedData(address, data) {
-        this.cardCache.set(address, {
+        this.dataCache.set(address, {
             data,
             timestamp: Date.now()
         });
@@ -50,340 +53,167 @@ class LasoBrowserService {
         });
     }
 
-    async init(privateKey) {
+    async getBrowser() {
         try {
-            if (!privateKey) {
-                throw new Error('Приватный ключ не предоставлен');
-            }
+            if (this.browser) return this.browser;
 
+            console.log('Запуск браузера...');
+            console.log('Путь к профилю:', this.userDataDir);
+
+            this.browser = await chromium.launchPersistentContext(this.userDataDir, {
+                headless: false,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage'
+                ],
+                viewport: { width: 1280, height: 720 },
+                userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                ignoreHTTPSErrors: true
+            });
+
+            console.log('Браузер запущен');
+            return this.browser;
+        } catch (error) {
+            console.error('Ошибка при запуске браузера:', error);
+            throw error;
+        }
+    }
+
+    async getToken(privateKey) {
+        try {
+            console.log('Получение токена...');
             const wallet = new ethers.Wallet(privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`);
             const address = wallet.address.toLowerCase();
+            console.log('Адрес кошелька:', address);
 
-            // Проверяем кэш токена
-            const cachedToken = this.getCachedToken(address);
-            if (cachedToken) {
-                console.log('Используем кэшированный токен для адреса:', address);
-                return { token: cachedToken };
-            }
-
-            console.log('Начинаем авторизацию для адреса:', address);
-            
-            // 1. Получаем nonce для подписи
+            console.log('Получаем nonce...');
             const nonceResponse = await axios.post('https://us-central1-kyc-ts.cloudfunctions.net/getNonceToSign', {
-                data: {
-                    address: address
-                }
-            }, {
-                headers: {
-                    'Origin': 'https://laso.finance',
-                    'Referer': 'https://laso.finance/',
-                    'Content-Type': 'application/json'
-                }
+                data: { address }
             });
-            
-            const messageToSign = nonceResponse.data.result.nonce;
-            console.log('Получили сообщение для подписи:', messageToSign);
+            console.log('Nonce получен');
 
-            // 2. Подписываем сообщение
-            const signature = await wallet.signMessage(messageToSign);
+            console.log('Подписываем сообщение...');
+            const signature = await wallet.signMessage(nonceResponse.data.result.nonce);
             console.log('Сообщение подписано');
 
-            // 3. Верифицируем подпись
+            console.log('Верифицируем подпись...');
             const verifyResponse = await axios.post('https://us-central1-kyc-ts.cloudfunctions.net/verifySignedMessage', {
-                data: {
-                    address: address,
-                    signature: signature
-                }
-            }, {
-                headers: {
-                    'Origin': 'https://laso.finance',
-                    'Referer': 'https://laso.finance/',
-                    'Content-Type': 'application/json'
-                }
+                data: { address, signature }
             });
+            console.log('Подпись верифицирована');
 
-            if (verifyResponse.data.data && verifyResponse.data.data.token) {
-                const token = verifyResponse.data.data.token;
-                // Сохраняем токен в кэш
-                this.setCachedToken(address, token);
-                console.log('Токен получен и сохранен в кэш');
-                return { token };
-            } else {
-                throw new Error('Токен не найден в ответе');
-            }
-
+            const token = verifyResponse.data.data.token;
+            console.log('Токен получен успешно');
+            return token;
         } catch (error) {
-            console.error('Ошибка при авторизации:', error.response?.data || error.message);
+            console.error('Ошибка при получении токена:', error.response?.data || error.message);
             throw error;
         }
     }
 
     async getBalance(privateKey) {
+        let page = null;
         try {
-            if (!privateKey) {
-                throw new Error('Приватный ключ не предоставлен');
-            }
+            // Получаем токен
+            const token = await this.getToken(privateKey);
 
-            const wallet = new ethers.Wallet(privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`);
-            const address = wallet.address.toLowerCase();
+            // Открываем страницу и получаем данные
+            console.log('Открываем страницу...');
+            const browser = await this.getBrowser();
+            page = await browser.newPage();
 
-            // Проверяем кэш данных карты
-            const cachedData = this.getCachedData(address);
-            if (cachedData) {
-                console.log('Используем кэшированные данные для адреса:', address);
-                return cachedData;
-            }
+            // Устанавливаем таймауты
+            page.setDefaultTimeout(60000);
+            page.setDefaultNavigationTimeout(60000);
 
-            // Получаем токен авторизации
-            const authResult = await this.init(privateKey);
-            const token = authResult.token;
-
-            if (!this.browser) {
-                console.log('Запускаем браузер');
-                this.browser = await puppeteer.launch({
-                    headless: true,
-                    args: [
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--window-size=1920,1080'
-                    ],
-                    defaultViewport: {
-                        width: 1920,
-                        height: 1080
-                    }
-                });
-            }
-
-            console.log('Открываем новую страницу');
-            const page = await this.browser.newPage();
-
-            try {
-                // Эмулируем MetaMask
-                await page.evaluateOnNewDocument((address) => {
-                    const ethereum = {
-                        isMetaMask: true,
-                        networkVersion: '1',
-                        chainId: '0x1',
-                        selectedAddress: address,
-                        isConnected: () => true,
-                        request: async ({ method, params }) => {
-                            switch (method) {
-                                case 'eth_requestAccounts':
-                                case 'eth_accounts':
-                                    return [address];
-                                case 'eth_chainId':
-                                    return '0x1';
-                                case 'eth_getBalance':
-                                    return '0x0';
-                                case 'personal_sign':
-                                case 'eth_sign':
-                                    return '0x0';
-                                default:
-                                    return null;
-                            }
-                        },
-                        on: () => {},
-                        removeListener: () => {},
-                        _metamask: {
-                            isUnlocked: () => true
-                        }
-                    };
-
-                    Object.defineProperty(window, 'ethereum', {
-                        value: ethereum,
-                        writable: false
-                    });
-
-                    window.web3 = {
-                        currentProvider: ethereum
-                    };
-                }, address);
-
-                // Устанавливаем токен в localStorage
-                await page.evaluateOnNewDocument((token) => {
-                    localStorage.setItem('auth._token.local', `Bearer ${token}`);
-                }, token);
-
-                // Переходим на страницу
-                await page.goto('https://laso.finance/international/rel', {
-                    waitUntil: 'networkidle0',
-                    timeout: 30000
-                });
-
-                // Ждем и получаем данные из localStorage
-                const cardData = await page.evaluate(() => {
-                    return new Promise((resolve) => {
-                        const checkData = () => {
-                            const data = localStorage.getItem('card');
-                            if (data) {
-                                resolve(JSON.parse(data));
-                            } else {
-                                setTimeout(checkData, 1000);
-                            }
-                        };
-                        checkData();
-                    });
-                });
-
-                if (!cardData) {
-                    throw new Error('Данные карты не найдены');
-                }
-
-                // Сохраняем данные в кэш
-                this.setCachedData(address, cardData);
-
-                return cardData;
-
-            } finally {
-                await page.close();
-            }
-            
-        } catch (error) {
-            console.error('Ошибка при получении баланса:', error.message);
-            throw error;
-        }
-    }
-
-    async setupPaymentMethod(privateKey, paymentType) {
-        try {
-            if (!privateKey) {
-                throw new Error('Приватный ключ не предоставлен');
-            }
-
-            if (!['apple', 'google'].includes(paymentType)) {
-                throw new Error('Неверный тип платежной системы. Используйте "apple" или "google"');
-            }
-
-            const wallet = new ethers.Wallet(privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`);
-            const address = wallet.address.toLowerCase();
-
-            // Получаем токен авторизации
-            const authResult = await this.init(privateKey);
-            const token = authResult.token;
-
-            // Открываем браузер в видимом режиме для взаимодействия с платежной системой
-            const browser = await puppeteer.launch({
-                headless: false,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--window-size=1920,1080'
-                ],
-                defaultViewport: {
-                    width: 1920,
-                    height: 1080
-                }
+            // Открываем страницу и ждем загрузки
+            console.log('Переходим на страницу...');
+            await page.goto('https://laso.finance/international/rel', {
+                waitUntil: 'networkidle',
+                timeout: 60000
             });
 
-            try {
-                console.log('Открываем страницу для настройки платежной системы');
-                const page = await browser.newPage();
+            // Ждем появления кнопки Connect Wallet
+            console.log('Ожидаем появления кнопки Connect Wallet...');
+            await page.waitForSelector('button:has-text("Connect Wallet")', { timeout: 30000 });
+            console.log('Кнопка Connect Wallet найдена');
 
-                // Эмулируем MetaMask
-                await page.evaluateOnNewDocument((address) => {
-                    const ethereum = {
-                        isMetaMask: true,
-                        networkVersion: '1',
-                        chainId: '0x1',
-                        selectedAddress: address,
-                        isConnected: () => true,
-                        request: async ({ method, params }) => {
-                            switch (method) {
-                                case 'eth_requestAccounts':
-                                case 'eth_accounts':
-                                    return [address];
-                                case 'eth_chainId':
-                                    return '0x1';
-                                case 'eth_getBalance':
-                                    return '0x0';
-                                case 'personal_sign':
-                                case 'eth_sign':
-                                    return '0x0';
-                                default:
-                                    return null;
-                            }
-                        },
-                        on: () => {},
-                        removeListener: () => {},
-                        _metamask: {
-                            isUnlocked: () => true
-                        }
-                    };
+            // Нажимаем на кнопку
+            console.log('Нажимаем на кнопку Connect Wallet...');
+            await page.click('button:has-text("Connect Wallet")');
+            console.log('Кнопка нажата');
 
-                    Object.defineProperty(window, 'ethereum', {
-                        value: ethereum,
-                        writable: false
-                    });
+            // Ждем появления MetaMask
+            console.log('Ожидаем появления MetaMask...');
+            await page.waitForTimeout(2000); // Даем время на появление MetaMask
 
-                    window.web3 = {
-                        currentProvider: ethereum
-                    };
-                }, address);
+            // Проверяем, что страница загрузилась
+            await page.waitForLoadState('networkidle');
+            console.log('Страница загружена');
 
-                // Устанавливаем токен в localStorage
-                await page.evaluateOnNewDocument((token) => {
-                    localStorage.setItem('auth._token.local', `Bearer ${token}`);
-                }, token);
+            // Устанавливаем токен
+            console.log('Устанавливаем токен...');
+            await page.evaluate((t) => {
+                localStorage.setItem('authToken', t);
+                console.log('Токен установлен в localStorage');
+            }, token);
 
-                // Переходим на страницу настроек карты
-                await page.goto('https://laso.finance/international/rel', {
-                    waitUntil: 'networkidle0',
-                    timeout: 30000
-                });
+            // Проверяем, что токен установлен
+            const tokenInStorage = await page.evaluate(() => {
+                return localStorage.getItem('authToken');
+            });
+            console.log('Токен в localStorage:', tokenInStorage ? 'установлен' : 'отсутствует');
 
-                // Ждем загрузки данных карты
-                await page.waitForFunction(() => {
-                    return localStorage.getItem('card') !== null;
-                }, { timeout: 30000 });
+            // Перезагружаем страницу
+            console.log('Перезагружаем страницу...');
+            await page.reload({ waitUntil: 'networkidle' });
+            console.log('Страница перезагружена');
 
-                // Находим и кликаем на кнопку настройки платежной системы
-                if (paymentType === 'apple') {
-                    console.log('Ожидаем появления кнопки Apple Pay');
-                    await page.waitForSelector('button[data-testid="apple-pay-button"]');
-                    await page.click('button[data-testid="apple-pay-button"]');
-                } else {
-                    console.log('Ожидаем появления кнопки Google Pay');
-                    await page.waitForSelector('button[data-testid="google-pay-button"]');
-                    await page.click('button[data-testid="google-pay-button"]');
-                }
+            // Ждем загрузки данных
+            console.log('Ожидаем загрузку данных...');
+            await page.waitForFunction(() => {
+                const data = localStorage.getItem('intlCardsViteV2');
+                return data && JSON.parse(data).length > 0;
+            }, { timeout: 60000 });
 
-                // Ждем завершения настройки от пользователя
-                console.log('Ожидаем действий пользователя...');
-                await page.waitForFunction(() => {
-                    const cardData = JSON.parse(localStorage.getItem('card') || '{}');
-                    return cardData.paymentMethods && cardData.paymentMethods.length > 0;
-                }, { timeout: 300000 }); // 5 минут на настройку
+            // Получаем данные
+            console.log('Получаем данные...');
+            const data = await page.evaluate(() => {
+                const raw = localStorage.getItem('intlCardsViteV2');
+                return raw ? JSON.parse(raw) : null;
+            });
 
-                console.log('Платежная система успешно настроена');
-
-                // Очищаем кэш для обновления данных
-                this.clearCache(address);
-
-                return true;
-
-            } finally {
-                await browser.close();
+            if (!data || !data.length) {
+                console.error('Данные не найдены в localStorage');
+                throw new Error('Нет данных');
             }
 
+            return {
+                lastFour: data[0].lastFourDigits,
+                balance: data[0].balance,
+                status: data[0].status
+            };
+
         } catch (error) {
-            console.error('Ошибка при настройке платежной системы:', error.message);
+            console.error('Критическая ошибка:', error.message);
+            if (page) {
+                try {
+                    await page.screenshot({ path: 'error.png' });
+                    console.log('Скриншот ошибки сохранен в error.png');
+                } catch (e) {
+                    console.error('Не удалось сделать скриншот:', e);
+                }
+                await page.close();
+            }
             throw error;
+        } finally {
+            if (page) {
+                await page.close();
+            }
         }
     }
 
-    // Метод для очистки кэша
-    clearCache(address) {
-        if (address) {
-            this.tokenCache.delete(address);
-            this.cardCache.delete(address);
-        } else {
-            this.tokenCache.clear();
-            this.cardCache.clear();
-        }
-    }
-
-    // Метод для закрытия браузера
     async close() {
         if (this.browser) {
             await this.browser.close();

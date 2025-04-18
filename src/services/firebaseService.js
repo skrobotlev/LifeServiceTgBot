@@ -1,70 +1,77 @@
-const { db } = require('../config/firebase');
-const { doc, setDoc, getDoc, updateDoc } = require('firebase/firestore');
+const { db } = require('../config/firebaseConfig');
+const { collection, doc, setDoc, getDoc, updateDoc, query, where, getDocs } = require('firebase/firestore');
 
 class FirebaseService {
-    async saveUserData(telegramId, walletAddress, cookies) {
+    // Создание нового пользователя
+    async createUser(userId, userData) {
         try {
-            const userRef = doc(db, 'users', telegramId.toString());
+            const userRef = doc(db, 'users', userId.toString());
             await setDoc(userRef, {
-                telegramId,
-                walletAddress,
-                cookies,
+                ...userData,
                 createdAt: new Date(),
-                lastUpdated: new Date()
+                updatedAt: new Date()
             });
             return true;
         } catch (error) {
-            console.error('Ошибка сохранения данных пользователя:', error);
-            throw error;
+            console.error('Error creating user:', error);
+            return false;
         }
     }
 
-    async getUserData(telegramId) {
+    // Получение пользователя
+    async getUser(userId) {
         try {
-            const userRef = doc(db, 'users', telegramId.toString());
-            const userDoc = await getDoc(userRef);
-            return userDoc.exists() ? userDoc.data() : null;
+            const userRef = doc(db, 'users', userId.toString());
+            const userSnap = await getDoc(userRef);
+            return userSnap.exists() ? userSnap.data() : null;
         } catch (error) {
-            console.error('Ошибка получения данных пользователя:', error);
-            throw error;
+            console.error('Error getting user:', error);
+            return null;
         }
     }
 
-    async updateUserBalance(telegramId, balance) {
+    // Обновление данных пользователя
+    async updateUser(userId, userData) {
         try {
-            const userRef = doc(db, 'users', telegramId.toString());
+            const userRef = doc(db, 'users', userId.toString());
             await updateDoc(userRef, {
-                balance,
-                lastUpdated: new Date()
+                ...userData,
+                updatedAt: new Date()
             });
             return true;
         } catch (error) {
-            console.error('Ошибка обновления баланса:', error);
-            throw error;
+            console.error('Error updating user:', error);
+            return false;
         }
     }
 
-    async saveUserPrivateKey(telegramId, privateKey) {
+    // Создание новой транзакции
+    async createTransaction(transactionData) {
         try {
-            const userRef = doc(db, 'users', telegramId.toString());
-            await updateDoc(userRef, {
-                privateKey,
-                lastUpdated: new Date()
+            const transactionsRef = collection(db, 'transactions');
+            const newTransactionRef = doc(transactionsRef);
+            await setDoc(newTransactionRef, {
+                ...transactionData,
+                createdAt: new Date(),
+                status: 'pending'
             });
-            return true;
+            return newTransactionRef.id;
         } catch (error) {
-            console.error('Ошибка сохранения приватного ключа:', error);
-            throw error;
+            console.error('Error creating transaction:', error);
+            return null;
         }
     }
 
-    async getUserPrivateKey(telegramId) {
+    // Получение транзакций пользователя
+    async getUserTransactions(userId) {
         try {
-            const userData = await this.getUserData(telegramId);
-            return userData?.privateKey || null;
+            const transactionsRef = collection(db, 'transactions');
+            const q = query(transactionsRef, where('userId', '==', userId.toString()));
+            const querySnapshot = await getDocs(q);
+            return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         } catch (error) {
-            console.error('Ошибка получения приватного ключа:', error);
-            throw error;
+            console.error('Error getting user transactions:', error);
+            return [];
         }
     }
 }

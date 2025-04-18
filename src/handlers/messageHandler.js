@@ -2,33 +2,46 @@ const lasoBrowserService = require('../services/lasoBrowserService');
 
 function formatTransactions(transactions) {
     if (!transactions || transactions.length === 0) return 'История транзакций пуста';
-    
-    return transactions.map(t => 
+
+    return transactions.map(t =>
         `📅 ${t.date}\n💬 ${t.description}\n${t.status ? `✅ ${t.status}\n` : ''}💰 ${t.amount}`
     ).join('\n\n');
 }
 
 async function handleMessage(msg, bot) {
+    console.log('=== Получено новое сообщение ===');
+    console.log('Chat ID:', msg.chat.id);
+    console.log('Text:', msg.text);
+    console.log('From:', msg.from.username);
+    console.log('====================');
+
     const chatId = msg.chat.id;
     const text = msg.text;
 
     try {
         switch (text) {
             case '/start':
-                await bot.sendMessage(chatId, 'Добро пожаловать! Доступные команды:\n' +
+                console.log('Обработка команды /start');
+                const startMessage = 'Добро пожаловать! Доступные команды:\n' +
                     '/auth - авторизация\n' +
                     '/balance - проверка баланса карты\n' +
                     '/applepay - привязать Apple Pay\n' +
-                    '/googlepay - привязать Google Pay');
+                    '/googlepay - привязать Google Pay';
+
+                console.log('Отправляем сообщение:', startMessage);
+                await bot.sendMessage(chatId, startMessage);
+                console.log('Сообщение отправлено');
                 break;
 
             case '/auth':
+                console.log('Обработка команды /auth');
                 await bot.sendMessage(chatId, 'Начинаю процесс авторизации...');
-                
+
                 try {
-                    // Здесь нужно получить приватный ключ из базы данных или .env для конкретного пользователя
                     const privateKey = process.env.METAMASK_PRIVATE_KEY;
-                    const result = await lasoBrowserService.init(privateKey);
+                    console.log('Получаем токен...');
+                    const token = await lasoBrowserService.getToken(privateKey);
+                    console.log('Токен получен:', token);
                     await bot.sendMessage(chatId, 'Авторизация успешно завершена! Теперь вы можете использовать /balance для проверки баланса.');
                 } catch (error) {
                     console.error('Ошибка авторизации:', error);
@@ -37,37 +50,30 @@ async function handleMessage(msg, bot) {
                 break;
 
             case '/balance':
+                console.log('Обработка команды /balance');
                 await bot.sendMessage(chatId, 'Получаю информацию о балансе...');
-                
+
                 try {
-                    // Здесь нужно получить приватный ключ из базы данных или .env для конкретного пользователя
                     const privateKey = process.env.METAMASK_PRIVATE_KEY;
+                    console.log('Получаем баланс...');
                     const data = await lasoBrowserService.getBalance(privateKey);
-                    
+                    console.log('Данные получены:', data);
+
                     const message = `💳 Карта Laso Finance\n` +
                         `Последние 4 цифры: *${data.lastFour}*\n` +
-                        `Срок действия: *${data.expiry}*\n` +
                         `Статус: *${data.status}*\n` +
-                        `Дата выпуска: *${data.createdAt}*\n` +
-                        `Баланс: *$${data.balance}*\n\n` +
-                        `Платежные системы:\n` +
-                        `${data.paymentMethods ? data.paymentMethods.join(', ') : 'Не привязаны'}`;
-                    
+                        `Баланс: *${data.balance}*`;
+
                     await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
                 } catch (error) {
                     console.error('Ошибка получения баланса:', error);
-                    await bot.sendMessage(chatId, 'Ошибка при получении баланса. Возможно, нужно заново авторизоваться через /auth');
+                    await bot.sendMessage(chatId, 'Ошибка при получении баланса. Пожалуйста, попробуйте позже.');
                 }
                 break;
 
             case '/applepay':
-                await bot.sendMessage(chatId, 'Начинаю процесс привязки Apple Pay...\n' +
-                    'Сейчас откроется браузер, где вам нужно будет:\n' +
-                    '1. Дождаться загрузки страницы\n' +
-                    '2. Нажать на кнопку Apple Pay\n' +
-                    '3. Следовать инструкциям для привязки карты\n' +
-                    'После успешной привязки браузер закроется автоматически.');
-                
+                await bot.sendMessage(chatId, 'Начинаю процесс привязки Apple Pay...');
+
                 try {
                     const privateKey = process.env.METAMASK_PRIVATE_KEY;
                     await lasoBrowserService.setupPaymentMethod(privateKey, 'apple');
@@ -79,13 +85,8 @@ async function handleMessage(msg, bot) {
                 break;
 
             case '/googlepay':
-                await bot.sendMessage(chatId, 'Начинаю процесс привязки Google Pay...\n' +
-                    'Сейчас откроется браузер, где вам нужно будет:\n' +
-                    '1. Дождаться загрузки страницы\n' +
-                    '2. Нажать на кнопку Google Pay\n' +
-                    '3. Следовать инструкциям для привязки карты\n' +
-                    'После успешной привязки браузер закроется автоматически.');
-                
+                await bot.sendMessage(chatId, 'Начинаю процесс привязки Google Pay...');
+
                 try {
                     const privateKey = process.env.METAMASK_PRIVATE_KEY;
                     await lasoBrowserService.setupPaymentMethod(privateKey, 'google');
@@ -97,6 +98,7 @@ async function handleMessage(msg, bot) {
                 break;
 
             default:
+                console.log('Неизвестная команда:', text);
                 await bot.sendMessage(chatId, 'Неизвестная команда. Используйте /start для просмотра доступных команд.');
         }
     } catch (error) {

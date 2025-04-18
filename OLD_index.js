@@ -10,10 +10,8 @@ const {
 const token = "7623617111:AAF1X988ErWNSxMYJn1Z7z3PGqhrvNJLG7A";
 const bot = new TelegramApi(token, { polling: true });
 
-// Здесь можно использовать один и тот же ID менеджера, если требуется
 const MANAGER_CHAT_ID = 197115775;
 
-// Массив с данными о доступных картах с типами
 const availableCards = [
   {
     name: "Пополняемая международная Visa",
@@ -33,19 +31,13 @@ function createTypeSelectionKeyboard() {
     reply_markup: JSON.stringify({
       inline_keyboard: [
         [{ text: "Пополняемые карты", callback_data: "type_popolnyaemye" }],
-        [
-          {
-            text: "Предоплаченные карты",
-            callback_data: "type_ne_popolnyaemye",
-          },
-        ],
+        [{ text: "Предоплаченные карты", callback_data: "type_ne_popolnyaemye" }],
         [{ text: "Связаться с менеджером", callback_data: "contact_manager" }],
       ],
     }),
   };
 }
 
-// Клавиатура для выбора карт по типу
 function createCardsByTypeKeyboard(cardType) {
   const filtered = availableCards.filter((card) => card.type === cardType);
   const inlineKeyboard = filtered.map((card) => [
@@ -55,7 +47,6 @@ function createCardsByTypeKeyboard(cardType) {
   return { reply_markup: JSON.stringify({ inline_keyboard: inlineKeyboard }) };
 }
 
-// Клавиатура "Назад"
 function createBackButtonKeyboard() {
   return {
     reply_markup: JSON.stringify({
@@ -64,7 +55,6 @@ function createBackButtonKeyboard() {
   };
 }
 
-// Клавиатура "Назад" + "Связаться с менеджером"
 function createBackAndContactKeyboard() {
   return {
     reply_markup: JSON.stringify({
@@ -78,15 +68,7 @@ function createBackAndContactKeyboard() {
   };
 }
 
-//////////////////////////
-// Состояния пользователей
-//////////////////////////
-
 const userStates = {};
-
-//////////////////////////
-// Установка команд бота
-//////////////////////////
 
 bot.setMyCommands([
   { command: "/start", description: "Приветствие" },
@@ -94,22 +76,27 @@ bot.setMyCommands([
   { command: "/contact", description: "Связаться с менеджером" },
 ]);
 
-//////////////////////////
-// Обработчик текстовых сообщений
-//////////////////////////
+// === ОБРАБОТКА С РЕФЕРАЛЬНЫМ КОДОМ ===
+bot.onText(/\/start(?:\s(.+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const refCode = match[1];
+
+  if (refCode) {
+    const userInfo = `${msg.from.first_name || ""} ${msg.from.last_name || ""} (@${msg.from.username || "не указан"})`;
+    await bot.sendMessage(
+      MANAGER_CHAT_ID,
+      `🚀 Новый пользователь по реферальной ссылке: ${refCode}\n👤 ${userInfo}\n🆔 ChatID: ${chatId}`
+    );
+  }
+
+  console.log("Пользователь ввёл /start, чат ID:", chatId);
+  await bot.sendMessage(chatId, privetstvie, createTypeSelectionKeyboard());
+});
 
 bot.on("message", async (msg) => {
   const text = msg.text;
   const chatId = msg.chat.id;
 
-  // Команда /start – выводим главное меню с выбором типа карт
-  if (text === "/start") {
-    console.log("Пользователь ввёл /start, чат ID:", chatId);
-    await bot.sendMessage(chatId, privetstvie, createTypeSelectionKeyboard());
-    return;
-  }
-
-  // Команда /contact – запускаем диалог для связи с менеджером
   if (text === "/contact") {
     console.log("Пользователь ввёл /contact, чат ID:", chatId);
     userStates[chatId] = { stage: "ask_username" };
@@ -121,7 +108,6 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // Если пользователь находится в диалоге (связь с менеджером)
   if (userStates[chatId]) {
     const state = userStates[chatId];
     console.log(
@@ -150,9 +136,8 @@ bot.on("message", async (msg) => {
     }
     if (state.stage === "ask_message") {
       state.message = text;
-      const userInfo = `${msg.from.first_name || ""} ${
-        msg.from.last_name || ""
-      } (@${msg.from.username || "не указан"})`;
+      const userInfo = `${msg.from.first_name || ""} ${msg.from.last_name || ""
+        } (@${msg.from.username || "не указан"})`;
       const info = `Новый запрос на связь с менеджером:
 Ник: ${state.username}
 Email: ${state.email}
@@ -172,17 +157,12 @@ ChatID: ${chatId}
   }
 });
 
-//////////////////////////
-// Обработчик callback-запросов
-//////////////////////////
-
 bot.on("callback_query", async (msg) => {
   const data = msg.data;
   const chatId = msg.message.chat.id;
   console.log(`callback_query от чата ${chatId}, data = ${data}`);
   await bot.answerCallbackQuery(msg.id);
 
-  // Общие кнопки "Назад" для возврата в главное меню или выбор типа
   if (data === "back_to_menu") {
     console.log("Нажата кнопка Назад, сбрасываем состояние");
     delete userStates[chatId];
@@ -205,7 +185,6 @@ bot.on("callback_query", async (msg) => {
     return;
   }
 
-  // Обработка выбора категории карт
   if (data === "type_popolnyaemye") {
     console.log("Выбрана категория: Пополняемые карты");
     await bot.sendMessage(
@@ -225,7 +204,6 @@ bot.on("callback_query", async (msg) => {
     return;
   }
 
-  // Обработка выбора конкретной карты
   const selectedCard = availableCards.find((card) => card.id === data);
   if (!selectedCard) {
     console.log("Карта не найдена по id:", data);

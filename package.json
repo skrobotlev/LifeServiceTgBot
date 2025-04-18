@@ -4,8 +4,11 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon src/index.js",
-    "start": "node OLD_index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/index.js",
+    "startOld": "node OLD_index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "setup": "node scripts/setupMetamask.js",
+    "test-browser": "node src/testBrowser.js"
   },
   "author": "",
   "license": "ISC",
@@ -21,6 +24,7 @@
     "nodemon": "^2.0.7",
     "pg": "^8.6.0",
     "pg-hstore": "^2.3.3",
+    "playwright": "^1.51.1",
     "puppeteer": "^21.7.0",
     "sequelize": "^6.6.2",
     "web3": "^4.16.0"
