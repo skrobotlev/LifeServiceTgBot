@@ -3,8 +3,7 @@ const referralService = require('../services/referralService');
 const { privetstvie } = require('../texts');
 const { db } = require('../config/firebaseConfig');
 const { doc, getDoc, collection, getDocs } = require('firebase/firestore');
-
-const ADMIN_ID = 197115775; // Ваш ID в Telegram
+const { PARTNERS, ADMIN_ID } = require('../config/partners');
 
 function formatTransactions(transactions) {
     if (!transactions || transactions.length === 0) return 'История транзакций пуста';
@@ -33,48 +32,64 @@ function createTypeSelectionKeyboard(isAdmin) {
     };
 }
 
-async function getReferralStats() {
+async function getReferralStats(username) {
     try {
-        // Получаем все документы из коллекции referrals
-        const referralsRef = collection(db, 'referrals');
-        const snapshot = await getDocs(referralsRef);
+        let statsMessage = '📊 *Статистика рефералов*\n\n';
 
-        let statsMessage = '📊 *Статистика по всем рефералам*\n\n';
+        // Определяем, какие реферальные ссылки доступны пользователю
+        const userRefs = PARTNERS[username] || [];
+        const isAdmin = username === 'usr149049'; // Дополнительная проверка на главного админа
+
+        // Если это не админ и у пользователя нет доступных рефералок
+        if (!isAdmin && userRefs.length === 0) {
+            return '⛔️ У вас нет доступа к статистике';
+        }
+
         let totalUsers = 0;
+        const processedRefs = [];
 
-        // Получаем все документы и их данные
-        const referrals = [];
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            const users = Object.entries(data)
-                .filter(([key]) => key.startsWith('user_'))
-                .map(([_, userData]) => userData);
+        // Для каждой доступной реферальной ссылки получаем статистику
+        for (const refId of isAdmin ? ['lvmnaboutAi'] : userRefs) {
+            const refDoc = await getDoc(doc(db, 'referrals', refId));
 
-            if (users.length > 0) {
-                referrals.push({
-                    id: doc.id,
-                    users: users
-                });
-                totalUsers += users.length;
+            if (refDoc.exists()) {
+                const data = refDoc.data();
+                const users = [];
+
+                // Собираем всех пользователей из полей документа
+                for (const key in data) {
+                    if (key.startsWith('user_')) {
+                        users.push(data[key]);
+                    }
+                }
+
+                if (users.length > 0) {
+                    processedRefs.push({
+                        id: refId,
+                        users: users
+                    });
+                    totalUsers += users.length;
+                }
             }
-        });
+        }
 
-        // Сортируем рефералы по количеству пользователей (по убыванию)
-        referrals.sort((a, b) => b.users.length - a.users.length);
+        // Если нет данных
+        if (processedRefs.length === 0) {
+            return 'Статистика пуста. Нет данных о переходах.';
+        }
 
-        statsMessage += `*Всего рефералов:* ${referrals.length}\n`;
         statsMessage += `*Всего переходов:* ${totalUsers}\n\n`;
 
-        // Выводим статистику по каждому рефералу
-        for (const referral of referrals) {
-            statsMessage += `🔸 *Реферальная ссылка:* ${referral.id}\n`;
-            statsMessage += `*Количество переходов:* ${referral.users.length}\n\n`;
+        // Выводим статистику по каждой доступной реферальной ссылке
+        for (const ref of processedRefs) {
+            statsMessage += `🔸 *Реферальная ссылка:* ${ref.id}\n`;
+            statsMessage += `*Количество переходов:* ${ref.users.length}\n\n`;
             statsMessage += '*Пользователи:*\n';
 
-            // Сортируем пользователей по дате (последние первые)
-            const sortedUsers = [...referral.users].sort((a, b) => {
-                return b.timestamp.seconds - a.timestamp.seconds;
-            });
+            // Сортируем пользователей по дате (новые первыми)
+            const sortedUsers = [...ref.users].sort((a, b) =>
+                b.timestamp.seconds - a.timestamp.seconds
+            );
 
             sortedUsers.forEach(user => {
                 const username = user.username ? `@${user.username}` : 'без username';
@@ -103,19 +118,21 @@ async function handleMessage(msg, bot) {
     const chatId = msg.chat.id;
     const text = msg.text;
     const userId = msg.from.id;
+    const username = msg.from.username;
     const isAdmin = userId === ADMIN_ID;
 
     try {
         // Обработка команды /stats
         if (text === '/stats') {
-            if (isAdmin) {
-                const statsMessage = await getReferralStats();
-                await bot.sendMessage(chatId, statsMessage, { parse_mode: 'Markdown' });
-                return;
-            } else {
-                await bot.sendMessage(chatId, '⛔️ У вас нет доступа к этой команде');
+            // Проверяем, есть ли у пользователя username
+            if (!username) {
+                await bot.sendMessage(chatId, '⚠️ Для доступа к статистике необходимо установить username в Telegram');
                 return;
             }
+
+            const statsMessage = await getReferralStats(username);
+            await bot.sendMessage(chatId, statsMessage, { parse_mode: 'Markdown' });
+            return;
         }
 
         // Обработка команды /start с реферальным кодом

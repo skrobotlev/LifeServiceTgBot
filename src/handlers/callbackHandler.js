@@ -1,9 +1,10 @@
 const { getReferralStats } = require('./messageHandler');
-const ADMIN_ID = 197115775;
+const { PARTNERS, ADMIN_ID } = require('../config/partners');
 
 async function handleCallback(callbackQuery, bot) {
     const chatId = callbackQuery.message.chat.id;
     const userId = callbackQuery.from.id;
+    const username = callbackQuery.from.username;
     const data = callbackQuery.data;
     const isAdmin = userId === ADMIN_ID;
 
@@ -11,21 +12,30 @@ async function handleCallback(callbackQuery, bot) {
         console.log('=== Обработка callback ===');
         console.log('Chat ID:', chatId);
         console.log('User ID:', userId);
+        console.log('Username:', username);
         console.log('Callback data:', data);
 
         switch (data) {
             case 'show_stats':
-                if (isAdmin) {
-                    const statsMessage = await getReferralStats();
+                if (!username) {
+                    await bot.answerCallbackQuery(callbackQuery.id, {
+                        text: '⚠️ Для доступа к статистике необходимо установить username в Telegram',
+                        show_alert: true
+                    });
+                    return;
+                }
+
+                const statsMessage = await getReferralStats(username);
+                if (statsMessage === '⛔️ У вас нет доступа к статистике') {
+                    await bot.answerCallbackQuery(callbackQuery.id, {
+                        text: statsMessage,
+                        show_alert: true
+                    });
+                } else {
                     await bot.editMessageText(statsMessage, {
                         chat_id: chatId,
                         message_id: callbackQuery.message.message_id,
                         parse_mode: 'Markdown'
-                    });
-                } else {
-                    await bot.answerCallbackQuery(callbackQuery.id, {
-                        text: '⛔️ У вас нет доступа к этой функции',
-                        show_alert: true
                     });
                 }
                 break;
