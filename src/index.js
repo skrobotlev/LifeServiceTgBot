@@ -20,11 +20,19 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
 // Обработка текстовых сообщений
 bot.on('message', async (msg) => {
+    console.log('\n=== Получено сообщение ===');
+    console.log('Chat ID:', msg.chat.id);
+    console.log('Text:', msg.text);
+    console.log('====================\n');
     await handleMessage(msg, bot);
 });
 
 // Обработка callback-запросов от inline-кнопок
 bot.on('callback_query', async (callbackQuery) => {
+    console.log('\n=== Получен callback ===');
+    console.log('Chat ID:', callbackQuery.message.chat.id);
+    console.log('Data:', callbackQuery.data);
+    console.log('====================\n');
     await handleCallback(callbackQuery, bot);
 });
 
