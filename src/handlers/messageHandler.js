@@ -4,6 +4,7 @@ const { privetstvie } = require('../texts');
 const { PARTNERS, ADMIN_ID } = require('../config/partners');
 const { handleReferral } = require('../services/referralService');
 const { createTypeSelectionKeyboard } = require('../utils/keyboardUtils');
+const { getReferralStats } = require('../utils/statsUtils');
 
 function formatTransactions(transactions) {
     if (!transactions || transactions.length === 0) return 'История транзакций пуста';
@@ -28,23 +29,53 @@ async function handleMessage(msg, bot) {
     console.log('====================\n');
 
     try {
-        // Обработка реферальной ссылки
-        if (text && text.startsWith('/start ')) {
-            const referralCode = text.split(' ')[1];
-            console.log('Обнаружен реферальный код:', referralCode);
-            await handleReferral(userId, username, referralCode);
+        // Обработка команды /contact
+        if (text === '/contact' || text === '/contact@your_bot_username') {
+            console.log("Команда: Связаться с менеджером");
+            const userInfo = `${msg.from.first_name || ""} ${msg.from.last_name || ""} (@${msg.from.username || "не указан"})`;
+            const info = `Новый запрос на связь с менеджером:
+ChatID: ${chatId}
+Информация о пользователе: ${userInfo}`;
+            console.log("Отправляем менеджеру:", info);
+            await bot.telegram.sendMessage(ADMIN_ID, info);
+            await bot.telegram.sendMessage(
+                chatId,
+                "Спасибо, ваша заявка отправлена. Наш менеджер свяжется с вами в ближайшее время.",
+                createTypeSelectionKeyboard(isAdmin, username)
+            );
+            return;
         }
 
-        // Создаем клавиатуру
-        const keyboard = createTypeSelectionKeyboard(isAdmin, username);
-        console.log('Отправляем сообщение с клавиатурой:', keyboard);
+        // Обработка команды /stats
+        if (text === '/stats' || text === '/stats@your_bot_username') {
+            console.log("Команда: Статистика");
+            const stats = await getReferralStats(username);
+            await bot.telegram.sendMessage(chatId, stats, { parse_mode: 'Markdown' });
+            return;
+        }
 
-        // Отправка приветственного сообщения с клавиатурой
-        await bot.telegram.sendMessage(
-            chatId,
-            privetstvie,
-            keyboard
-        );
+        // Обработка реферальной ссылки или команды /start
+        if (text && text.startsWith('/start')) {
+            console.log("Команда: Старт");
+            if (text !== '/start' && text !== '/start@your_bot_username') {
+                const referralCode = text.split(' ')[1];
+                console.log('Обнаружен реферальный код:', referralCode);
+                await handleReferral(userId, username, referralCode);
+            }
+
+            // Создаем клавиатуру
+            const keyboard = createTypeSelectionKeyboard(isAdmin, username);
+            console.log('Отправляем сообщение с клавиатурой:', keyboard);
+
+            // Отправка приветственного сообщения с клавиатурой
+            await bot.telegram.sendMessage(
+                chatId,
+                privetstvie,
+                keyboard
+            );
+            return;
+        }
+
     } catch (error) {
         console.error('Ошибка при обработке сообщения:', error);
         await bot.telegram.sendMessage(chatId, 'Произошла ошибка. Пожалуйста, попробуйте позже.');
