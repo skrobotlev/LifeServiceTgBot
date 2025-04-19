@@ -2,7 +2,7 @@ const lasoBrowserService = require('../services/lasoBrowserService');
 const referralService = require('../services/referralService');
 const { privetstvie } = require('../texts');
 const { db } = require('../config/firebaseConfig');
-const { doc, getDoc } = require('firebase/firestore');
+const { doc, getDoc, collection, getDocs } = require('firebase/firestore');
 
 const ADMIN_ID = 197115775; // Ваш ID в Telegram
 
@@ -14,50 +14,75 @@ function formatTransactions(transactions) {
     ).join('\n\n');
 }
 
-function createTypeSelectionKeyboard() {
+function createTypeSelectionKeyboard(isAdmin) {
+    const keyboard = [
+        [{ text: "Пополняемые карты", callback_data: "type_popolnyaemye" }],
+        [{ text: "Предоплаченные карты", callback_data: "type_ne_popolnyaemye" }],
+        [{ text: "Связаться с менеджером", callback_data: "contact_manager" }]
+    ];
+
+    // Добавляем кнопку статистики только для админа
+    if (isAdmin) {
+        keyboard.push([{ text: "📊 Статистика", callback_data: "show_stats" }]);
+    }
+
     return {
         reply_markup: JSON.stringify({
-            inline_keyboard: [
-                [{ text: "Пополняемые карты", callback_data: "type_popolnyaemye" }],
-                [{ text: "Предоплаченные карты", callback_data: "type_ne_popolnyaemye" }],
-                [{ text: "Связаться с менеджером", callback_data: "contact_manager" }],
-            ],
-        }),
+            inline_keyboard: keyboard
+        })
     };
 }
 
 async function getReferralStats() {
     try {
-        // Получаем документ lvmnaboutAi
-        const refDoc = await getDoc(doc(db, 'referrals', 'lvmnaboutAi'));
+        // Получаем все документы из коллекции referrals
+        const referralsRef = collection(db, 'referrals');
+        const snapshot = await getDocs(referralsRef);
 
-        let statsMessage = '📊 *Статистика рефералов*\n\n';
+        let statsMessage = '📊 *Статистика по всем рефералам*\n\n';
+        let totalUsers = 0;
 
-        if (!refDoc.exists()) {
-            return 'Статистика пуста. Нет данных о рефералах.';
-        }
+        // Получаем все документы и их данные
+        const referrals = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            const users = Object.entries(data)
+                .filter(([key]) => key.startsWith('user_'))
+                .map(([_, userData]) => userData);
 
-        const data = refDoc.data();
-        const users = [];
-
-        // Собираем всех пользователей из полей документа
-        for (const key in data) {
-            if (key.startsWith('user_')) {
-                users.push(data[key]);
+            if (users.length > 0) {
+                referrals.push({
+                    id: doc.id,
+                    users: users
+                });
+                totalUsers += users.length;
             }
-        }
+        });
 
-        statsMessage += `*Реферальная ссылка:* lvmnaboutAi\n`;
-        statsMessage += `*Количество переходов:* ${users.length}\n\n`;
+        // Сортируем рефералы по количеству пользователей (по убыванию)
+        referrals.sort((a, b) => b.users.length - a.users.length);
 
-        if (users.length > 0) {
+        statsMessage += `*Всего рефералов:* ${referrals.length}\n`;
+        statsMessage += `*Всего переходов:* ${totalUsers}\n\n`;
+
+        // Выводим статистику по каждому рефералу
+        for (const referral of referrals) {
+            statsMessage += `🔸 *Реферальная ссылка:* ${referral.id}\n`;
+            statsMessage += `*Количество переходов:* ${referral.users.length}\n\n`;
             statsMessage += '*Пользователи:*\n';
-            users.forEach(user => {
+
+            // Сортируем пользователей по дате (последние первые)
+            const sortedUsers = [...referral.users].sort((a, b) => {
+                return b.timestamp.seconds - a.timestamp.seconds;
+            });
+
+            sortedUsers.forEach(user => {
                 const username = user.username ? `@${user.username}` : 'без username';
                 const name = user.firstName || 'Без имени';
                 const date = user.timestamp ? new Date(user.timestamp.seconds * 1000).toLocaleString() : 'время не указано';
                 statsMessage += `- ${name} (${username}) - ${date}\n`;
             });
+            statsMessage += '\n';
         }
 
         return statsMessage;
@@ -78,11 +103,12 @@ async function handleMessage(msg, bot) {
     const chatId = msg.chat.id;
     const text = msg.text;
     const userId = msg.from.id;
+    const isAdmin = userId === ADMIN_ID;
 
     try {
-        // Обработка команды /stats (только для админа)
+        // Обработка команды /stats
         if (text === '/stats') {
-            if (userId === ADMIN_ID) {
+            if (isAdmin) {
                 const statsMessage = await getReferralStats();
                 await bot.sendMessage(chatId, statsMessage, { parse_mode: 'Markdown' });
                 return;
@@ -98,7 +124,6 @@ async function handleMessage(msg, bot) {
             console.log('=== Обработка /start ===');
             console.log('Полное сообщение:', text);
 
-            // Извлекаем реферальный код из разных возможных форматов ссылки
             if (text.includes('?start=')) {
                 refCode = text.split('?start=')[1];
                 console.log('Извлечен код из ?start=:', refCode);
@@ -111,13 +136,11 @@ async function handleMessage(msg, bot) {
             console.log('Данные пользователя:', msg.from);
 
             if (refCode) {
-                // Сохраняем реферала в Firebase
                 console.log('Пытаемся сохранить реферал...');
                 const saved = await referralService.saveReferral(refCode, msg.from);
                 console.log('Результат сохранения реферала:', saved);
 
                 if (saved) {
-                    // Отправляем уведомление менеджеру
                     const userInfo = `${msg.from.first_name || ""} ${msg.from.last_name || ""} (@${msg.from.username || "не указан"})`;
                     await bot.sendMessage(
                         ADMIN_ID,
@@ -131,14 +154,14 @@ async function handleMessage(msg, bot) {
                 console.log('Реферальный код не найден в сообщении');
             }
 
-            await bot.sendMessage(chatId, privetstvie, createTypeSelectionKeyboard());
+            await bot.sendMessage(chatId, privetstvie, createTypeSelectionKeyboard(isAdmin));
             return;
         }
 
         // Обработка остальных команд
         switch (text) {
             case '/start':
-                await bot.sendMessage(chatId, privetstvie, createTypeSelectionKeyboard());
+                await bot.sendMessage(chatId, privetstvie, createTypeSelectionKeyboard(isAdmin));
                 break;
             default:
                 await bot.sendMessage(chatId, 'Неизвестная команда. Используйте /start для начала работы.');
@@ -150,4 +173,7 @@ async function handleMessage(msg, bot) {
     }
 }
 
-module.exports = handleMessage; 
+module.exports = {
+    handleMessage,
+    getReferralStats
+}; 

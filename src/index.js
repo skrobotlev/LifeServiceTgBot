@@ -1,7 +1,9 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const handleMessage = require('./handlers/messageHandler');
-const { handleCallback } = require("./handlers/callbackHandler");
+const handleMessage = require('./handlers/messageHandler').handleMessage;
+const handleCallback = require('./handlers/callbackHandler');
+
+console.log('Сервис инициализирован');
 
 // Проверяем наличие токена
 if (!process.env.TELEGRAM_BOT_TOKEN) {
@@ -9,18 +11,25 @@ if (!process.env.TELEGRAM_BOT_TOKEN) {
     process.exit(1);
 }
 
-console.log('=== Инициализация бота ===');
-console.log('Токен бота:', process.env.TELEGRAM_BOT_TOKEN);
+// Инициализация Firebase
+require('./config/firebaseConfig');
 
-// Создаем бота с минимальными настройками
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
-    polling: {
-        interval: 300,
-        autoStart: true,
-        params: {
-            timeout: 10
-        }
-    }
+console.log('=== Инициализация бота ===');
+
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+
+// Обработка текстовых сообщений
+bot.on('message', async (msg) => {
+    await handleMessage(msg, bot);
+});
+
+// Обработка callback-запросов от inline-кнопок
+bot.on('callback_query', async (callbackQuery) => {
+    await handleCallback(callbackQuery, bot);
+});
+
+process.on('unhandledRejection', (error) => {
+    console.error('Необработанная ошибка:', error);
 });
 
 // Проверяем, что бот работает
@@ -29,25 +38,6 @@ bot.getMe().then(me => {
 }).catch(err => {
     console.error('Ошибка при инициализации бота:', err);
     process.exit(1);
-});
-
-// Обработчики
-bot.on('message', async (msg) => {
-    console.log('=== Новое сообщение ===');
-    console.log('Chat ID:', msg.chat.id);
-    console.log('Text:', msg.text);
-    console.log('From:', msg.from.username);
-    console.log('====================');
-
-    handleMessage(msg, bot);
-});
-
-bot.on('callback_query', async (query) => {
-    console.log('=== Новый callback ===');
-    console.log('Query:', query);
-    console.log('====================');
-
-    handleCallback(query, bot);
 });
 
 // Обработчики ошибок
